@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Strategy Optimizer | Custom Deck Simulator</title>
+  <meta name="description" content="Optimize blackjack strategies using Monte Carlo simulation on custom deck compositions. Compare basic, conservative, and aggressive play styles with EV heatmaps and statistical analysis." />
+  <meta name="keywords" content="blackjack, strategy optimizer, monte carlo simulation, custom deck, heatmap, EV, house edge" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+  
+</head>
+<body>
+  <header>
+    <h1>Blackjack Strategy Optimizer</h1>
+    <p>Simulate custom decks and compare play strategies with EV heatmaps and win-rate charts.</p>
+  </header>
+
+  <main>
+   <section id="deckControl">
+  <h3>Customize Deck</h3>
+  <div class="deck-flex">
+    <div class="card-box"><label>A</label><input type="number" class="card-input" data-rank="A" value="4" /></div>
+    <div class="card-box"><label>2</label><input type="number" class="card-input" data-rank="2" value="4" /></div>
+    <div class="card-box"><label>3</label><input type="number" class="card-input" data-rank="3" value="4" /></div>
+    <div class="card-box"><label>4</label><input type="number" class="card-input" data-rank="4" value="4" /></div>
+    <div class="card-box"><label>5</label><input type="number" class="card-input" data-rank="5" value="4" /></div>
+    <div class="card-box"><label>6</label><input type="number" class="card-input" data-rank="6" value="4" /></div>
+    <div class="card-box"><label>7</label><input type="number" class="card-input" data-rank="7" value="4" /></div>
+    <div class="card-box"><label>8</label><input type="number" class="card-input" data-rank="8" value="4" /></div>
+    <div class="card-box"><label>9</label><input type="number" class="card-input" data-rank="9" value="4" /></div>
+    <div class="card-box"><label>10</label><input type="number" class="card-input" data-rank="10" value="16" /></div>
+  </div>
+</section>
+
+
+    <section id="controls">
+      <label># Decks: <input type="number" id="decks" value="1" min="1"></label>
+      <label>Dealer stands on soft 17:
+        <select id="dealer-stands">
+          <option value="soft17">Yes</option>
+          <option value="hit17">No</option>
+        </select>
+      </label>
+      <label># Simulations: <input type="number" id="simulations" value="5000" min="1"></label>
+      <button id="runSimulation">Run Simulation</button>
+      <div id="progressContainer"><div id="progressBar"></div></div>
+    </section>
+
+    <section class="results-grid" id="results">
+      <div class="card" id="basicResult"></div>
+      <div class="card" id="conservativeResult"></div>
+      <div class="card" id="aggressiveResult"></div>
+    </section>
+
+    <section id="chartContainer">
+      <canvas id="resultsChart"></canvas>
+    </section>
+
+    <section id="heatmapContainer">
+      <h3>EV Heatmap (Player total vs Dealer up‑card)</h3>
+      <div class="heatmap-grid" id="strategyHeatmap"></div>
+    </section>
+  </main>
+
+  <script>
+  // === Engine & Strategy Classes ===
+  class CustomBlackjackEngine {
+    constructor(composition, numDecks, dealerStandsOnSoft17) {
+      this.numDecks = numDecks;
+      this.dealerStandsOnSoft17 = dealerStandsOnSoft17;
+      this.initialComposition = JSON.parse(JSON.stringify(composition));
+      this.initializeDeck();
+    }
+    initializeDeck() {
+      this.deck = [];
+      for (let r in this.initialComposition) {
+        const count = this.initialComposition[r] * this.numDecks;
+        for (let i = 0; i < count; i++) this.deck.push({ rank: r });
+      }
+      this.deck.sort(() => Math.random() - 0.5);
+    }
+    dealCard() {
+      if (this.deck.length === 0) this.initializeDeck();
+      return this.deck.pop();
+    }
+    getCardValue(card) {
+      const r = card.rank;
+      return r === 'A' ? 11 : (['10','J','Q','K'].includes(r) ? 10 : parseInt(r));
+    }
+    calculateHandValue(hand) {
+      let total = 0, aces = 0;
+      for (const c of hand) {
+        if (c.rank === 'A') aces++;
+        total += this.getCardValue(c);
+      }
+      while (total > 21 && aces > 0) {
+        total -= 10; aces--;
+      }
+      return { value: total, isSoft: aces > 0 };
+    }
+    isBlackjack(hand) {
+      return hand.length === 2 && this.calculateHandValue(hand).value === 21;
+    }
+  }
+
+  class BasicStrategy {
+    getAction(playerHand, dealerUpCard, engine) {
+      const p = engine.calculateHandValue(playerHand).value;
+      const d = engine.getCardValue(dealerUpCard);
+      if (p >= 17) return 'S';
+      if (p >= 13 && d <= 6) return 'S';
+      if (p === 12 && d >= 4 && d <= 6) return 'S';
+      if (p === 11) return 'D';
+      if (p === 10 && d <= 9) return 'D';
+      if (p === 9 && d >= 3 && d <= 6) return 'D';
+      return 'H';
+    }
+  }
+  class ConservativeStrategy extends BasicStrategy {
+    getAction(ph, dc, engine) {
+      const base = super.getAction(ph, dc, engine);
+      const p = engine.calculateHandValue(ph).value;
+      if (base === 'D') return 'S';
+      if (base === 'H' && p >= 15) return 'S';
+      return base;
+    }
+  }
+  class AggressiveStrategy extends BasicStrategy {
+    getAction(ph, dc, engine) {
+      const base = super.getAction(ph, dc, engine);
+      const p = engine.calculateHandValue(ph).value;
+      if (base === 'S' && p <= 16) return 'H';
+      if (base === 'H' && p >= 8) return 'D';
+      return base;
+    }
+  }
+
+  const strategyMap = {
+    basic: BasicStrategy,
+    conservative: ConservativeStrategy,
+    aggressive: AggressiveStrategy
+  };
+
+  // === Simulation & Rendering ===
+  function runSim(StrategyClass, comp, decks, dealerStands, sims) {
+    const engine = new CustomBlackjackEngine(comp, decks, dealerStands);
+    const strat = new StrategyClass();
+    const stats = {hands:0, wins:0, losses:0, pushes:0, blackjacks:0, busts:0};
+
+    for (let i = 0; i < sims; i++) {
+      const pH = [engine.dealCard(), engine.dealCard()];
+      const dH = [engine.dealCard(), engine.dealCard()];
+      const pv = engine.calculateHandValue(pH).value;
+      const dv = engine.calculateHandValue(dH).value;
+      if (pv > 21) stats.busts++;
+      else if (engine.isBlackjack(pH)) stats.blackjacks++;
+      if (pv > dv) stats.wins++;
+      else if (pv < dv) stats.losses++;
+      else stats.pushes++;
+      stats.hands++;
+    }
+    return stats;
+  }
+
+  function renderComparison(res) {
+    ['basic','conservative','aggressive'].forEach(s => {
+      const st = res[s];
+      const el = document.getElementById(s + 'Result');
+      const wr = ((st.wins/st.hands)*100).toFixed(1)+'%';
+      const ev = (((st.wins-st.losses)/st.hands)*100).toFixed(1)+'%';
+      const he = ((st.losses/st.hands)*100).toFixed(1)+'%';
+      const bj = ((st.blackjacks/st.hands)*100).toFixed(1)+'%';
+      const bu = ((st.busts/st.hands)*100).toFixed(1)+'%';
+
+      el.innerHTML = `
+        <h3>${s.charAt(0).toUpperCase()+s.slice(1)}</h3>
+        <div class="stat"><span>Win Rate:</span><span>${wr}</span></div>
+        <div class="stat"><span>EV:</span><span>${ev}</span></div>
+        <div class="stat"><span>House Edge:</span><span>${he}</span></div>
+        <div class="stat"><span>Blackjack Rate:</span><span>${bj}</span></div>
+        <div class="stat"><span>Bust Rate:</span><span>${bu}</span></div>`;
+    });
+  }
+
+ function generateHeatmap(stratName, comp, decks, dealerStands) {
+  const grid = document.getElementById('strategyHeatmap');
+  grid.innerHTML = '';
+
+  const engine = new CustomBlackjackEngine(comp, decks, dealerStands);
+  const strat = new (strategyMap[stratName])();
+
+  const pTotals = Array.from({length: 20}, (_, i) => i + 2); // 2 to 21
+  const dCards = ['2','3','4','5','6','7','8','9','10','A'];
+
+  // Create CSS Grid: 1 extra row and column for headers
+  grid.style.display = 'grid';
+  grid.style.gridTemplateColumns = `auto repeat(${dCards.length}, 1fr)`;
+  grid.style.gridAutoRows = 'auto';
+  grid.style.gap = '1px';
+
+  // Top-left empty cell
+  grid.appendChild(headerCell(''));
+
+  // Dealer up-cards header
+  dCards.forEach(d => grid.appendChild(headerCell(d)));
+
+  // Player rows + data cells
+  for (let p of pTotals) {
+    grid.appendChild(headerCell(p)); // Player total label (row header)
+
+    for (let d of dCards) {
+      let w=0, l=0, pu=0;
+      for (let i=0; i<50; i++) {
+        engine.initializeDeck();
+        const fake = {rank: d};
+        const pH = buildHandForValue(engine, p);
+        const dH = [fake, engine.dealCard()];
+        const pv = engine.calculateHandValue(pH).value;
+        const dv = engine.calculateHandValue(dH).value;
+        if (pv > 21 || pv < dv) l++;
+        else if (pv > dv) w++;
+        else pu++;
+      }
+      const ev = ((w - l) / (w + l + pu)) * 100;
+      const cell = document.createElement('div');
+      cell.className = 'heatmap-cell';
+      cell.style.backgroundColor = evToColor(ev);
+      cell.textContent = ev.toFixed(0) + '%';
+      grid.appendChild(cell);
+    }
+  }
+
+  function headerCell(text) {
+    const c = document.createElement('div');
+    c.className = 'heatmap-header';
+    c.textContent = text;
+    return c;
+  }
+
+  document.getElementById('heatmapContainer').style.display = 'block';
+}
+
+
+  function buildHandForValue(engine, target) {
+    let hand = [], total = 0;
+    while (total < target) {
+      const c = engine.dealCard();
+      const v = engine.getCardValue(c);
+      if (total + v <= target) {
+        hand.push(c);
+        total += v;
+      } else break;
+    }
+    return hand;
+  }
+
+  function evToColor(ev) {
+    const t = (ev + 100) / 200;
+    const r = Math.round(255 * (1 - t));
+    const g = Math.round(255 * t);
+    return `rgb(${r},${g},120)`;
+  }
+
+  document.getElementById('runSimulation').addEventListener('click', () => {
+    const sims = +document.getElementById('simulations').value;
+    const decks = +document.getElementById('decks').value;
+    const stands = document.getElementById('dealer-stands').value === 'soft17';
+    const comp = {};
+    document.querySelectorAll('.card-input').forEach(i => comp[i.dataset.rank] = +i.value);
+
+    const res = {
+      basic: runSim(BasicStrategy, comp, decks, stands, sims),
+      conservative: runSim(ConservativeStrategy, comp, decks, stands, sims),
+      aggressive: runSim(AggressiveStrategy, comp, decks, stands, sims)
+    };
+
+
+    
+
+    renderComparison(res);
+    generateHeatmap('basic', comp, decks, stands);
+    document.getElementById('results').style.display = 'grid';
+  });
+  </script>
+</body>
+</html>
